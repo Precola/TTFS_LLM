@@ -1,70 +1,45 @@
+<div align="center">
+
 # Large Language Models with At Most One Spike per Neuron
 
-Paper link: https://arxiv.org/abs/2609.05151
+### TTFS-based language model pretraining and downstream evaluation
 
-## Overview
+[![arXiv](https://img.shields.io/badge/arXiv-2609.05151-b31b1b.svg)](https://arxiv.org/abs/2609.05151)
+[![Paper](https://img.shields.io/badge/Paper-Read%20PDF-0d9488.svg)](https://arxiv.org/abs/2609.05151)
 
-This repository consolidates the original research code used for the paper "Large Language Models with At Most One Spike per Neuron". It preserves two complementary experimental codebases built around a time-to-first-spike (TTFS) formulation for transformer-style language models:
+**Zhuoya Zhao** · **Parsa Omidi** · **Aref Jafari** · **Richard Naud**
 
-- `GPT2/` contains the GPT-2 language-modeling experiments used for TTFS training, evaluation, and perplexity analysis.
-- `BERT/` contains the BERT/GLUE benchmarks used to evaluate downstream language understanding under the same TTFS design.
+</div>
 
-The key idea is to apply the sparse, event-driven TTFS coding principle to large language models while keeping the overall transformer structure familiar. In standard TTFS coding, each neuron emits at most one spike within a temporal window; the paper extends this idea to reference-based representations for the main LLM components, including embeddings, normalization, attention-related transforms, and dropout. This repository preserves the original implementation paths rather than redesigning the experiments.
+This repo contains the code used for the paper "Large Language Models with At Most One Spike per Neuron". It keeps the original research workflow in a clean local layout: a GPT-2-style pretraining path for TTFS language modeling, and a BERT/GLUE path for downstream evaluation.
 
-## Repository structure
+## TL;DR
 
-```text
-LLM-One-Spike-per-Neuron/
-├── README.md
-├── .gitignore
-├── requirements.txt
-├── GPT2/
-│   ├── LICENSE
-│   ├── train.py
-│   ├── model.py
-│   ├── sample.py
-│   ├── perplexity.py
-│   ├── config/
-│   ├── base_TTFS.py
-│   ├── basic_layer_TTFS.py
-│   └── ...
-├── BERT/
-│   ├── dev_TTFS.py
-│   ├── dev_vanilla.py
-│   ├── run_glue.py
-│   ├── model/
-│   ├── Tasks/
-│   ├── utils/
-│   └── ...
-└── ...
-```
+The project is built around a time-to-first-spike (TTFS) formulation for transformer-style language models. The GPT branch is the pretraining side, and the BERT branch is the evaluation side used to test the same idea on downstream language tasks.
 
-### `GPT2/`
+## Project structure
 
-This directory contains the GPT-2 training and evaluation code from the original `TTFS_GPT2` project. It includes the model definition, TTFS layer logic, and language-model training or perplexity scripts used in the paper experiments.
+- `GPT2_pretrain/`: GPT-2 model code, TTFS primitives, training scripts, and perplexity/sampling utilities
+- `BERT_pretrain/`: BERT and GLUE experiments, vanilla vs TTFS comparisons, and task-specific model code
+- `requirements.txt`: dependency list for the retained code paths
 
-Key entry points:
+This is a source snapshot of the original implementation, not a refactor into a new benchmark framework.
 
-- `GPT2/train.py`
-- `GPT2/train_fineweb.py`
-- `GPT2/perplexity.py`
-- `GPT2/sample.py`
+## Why it is organized like this
 
-### `BERT/`
+The code matches the actual research flow:
 
-This directory contains the BERT/GLUE code derived from the `test_on_GLUE` project, treated here as the downstream evaluation path for the paper. The implementation is not a generic word-level benchmark; it is the GLUE-style classification and comparison pipeline used to test TTFS and vanilla BERT behavior.
+1. Pretraining a GPT-2-style language model with TTFS layers and custom reference-based dynamics.
+2. Evaluating the learned representation on BERT/GLUE-style downstream tasks.
 
-Key entry points:
+The relevant entry points are:
 
-- `BERT/dev_TTFS.py`
-- `BERT/dev_vanilla.py`
-- `BERT/run_glue.py`
-- `BERT/model/DownstreamTasks/`
-- `BERT/Tasks/`
+- `GPT2_pretrain/train.py` and `GPT2_pretrain/perplexity.py`
+- `GPT2_pretrain/base_TTFS.py` and `GPT2_pretrain/basic_layer_TTFS.py`
+- `BERT_pretrain/dev_vanilla.py` and `BERT_pretrain/dev_TTFS.py`
+- `BERT_pretrain/run_glue.py`
 
-## Installation
-
-The repository is intended to run in a Python environment with the source tree checked out locally.
+## Setup
 
 ```bash
 python -m venv .venv
@@ -76,97 +51,80 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Dependencies used by the retained code paths include:
+Dependencies used by the code paths in this repo:
 
 - Python 3.10+
 - PyTorch
-- Hugging Face `transformers`
-- Hugging Face `datasets`
-- `evaluate`
-- `tiktoken`
-- `wandb`
-- `tqdm`
+- transformers
+- datasets
+- evaluate
+- tiktoken
+- wandb
+- tqdm
 
-Hardware note: the GPT experiments are designed for CUDA-capable GPUs, while the BERT/GLUE scripts are usually run in a GPU-enabled environment but can also be inspected and adapted for smaller local runs.
+GPU hardware is strongly recommended for GPT pretraining. The BERT/GLUE path is also meant for GPU usage in practice.
 
 ## Data preparation
 
-This repository does not include the large datasets or checkpoint bundles used by the original experiments.
+This repo does not include the large corpora or checkpoint bundles from the original experiments.
 
-### GPT2 experiments
+### GPT2 pretraining
 
 The GPT side expects a local corpus directory such as:
 
 - `data/openwebtext`
-- or another text corpus prepared in the binary format expected by `GPT2/train.py`
+- or another corpus in the binary format expected by `GPT2_pretrain/train.py`
 
-The dataset itself must be downloaded from its official source and placed under the expected local path before training or perplexity evaluation.
+The training loop reads tokenized binary data and runs the GPT-2-style pretraining setup from `GPT2_pretrain/train.py`.
 
-### BERT / GLUE experiments
+### BERT / GLUE
 
-The BERT code loads GLUE tasks through Hugging Face `datasets`, including tasks such as SST-2, MRPC, QNLI, QQP, RTE, MNLI, STS-B, and CoLA. No GLUE data is bundled in this repository. The scripts fetch the datasets from the standard Hugging Face dataset loader during execution.
+The BERT scripts use the Hugging Face `datasets` loader for GLUE tasks such as SST-2, MRPC, QNLI, QQP, RTE, MNLI, STS-B, and CoLA. No benchmark data is bundled in this repo; it is fetched from the standard Hugging Face dataset sources during execution.
 
-The repository also keeps a local `BERT/bert-base-uncased/` directory and related tokenizer configuration files as part of the original experiment layout. These are retained for code fidelity, but they are not a substitute for a full benchmark or pretrained checkpoint cache.
+## Quick start
 
-## Usage
-
-The code is organized around the original project separation and should be run from the corresponding directory unless you are adapting paths manually.
-
-### GPT2 usage
+### GPT2 pretraining
 
 ```bash
-cd GPT2
+cd GPT2_pretrain
 python train.py --help
 python train.py config/train_shakespeare_char.py --device=cpu --compile=False
+```
+
+For a larger run, use the config files in `GPT2_pretrain/config/` and the training loop in `GPT2_pretrain/train.py`.
+
+### GPT2 perplexity / sampling
+
+```bash
+cd GPT2_pretrain
+python perplexity.py
 python sample.py --out_dir=out-shakespeare-char --device=cpu
 ```
 
-Larger-scale experiments can use the original GPT-2 and fineweb training scripts as provided:
+### BERT / GLUE evaluation
 
 ```bash
-cd GPT2
-python train.py config/train_gpt2.py
-python perplexity.py
-```
-
-The exact local data paths and checkpoint layout may need to be adjusted to match the host environment because the original scripts include author-specific absolute paths.
-
-### BERT / GLUE usage
-
-```bash
-cd BERT
+cd BERT_pretrain
 python dev_vanilla.py
 python dev_TTFS.py
-```
-
-The repository also includes task-specific entry points and a generic runner:
-
-```bash
-cd BERT
 python run_glue.py
 ```
 
-As with the GPT2 code, the original scripts may assume local paths for pretrained assets or cached experiment artifacts. These references are preserved to match the source repositories and may require small path adjustments in a fresh environment.
+## Pretraining and evaluation flow
 
-## Reproducing experiments
+This project keeps the original research workflow instead of trying to package everything into a single benchmark wrapper.
 
-This repository preserves the original experimental structure rather than forcing a new standardized benchmark harness. In practice:
+- GPT2 side: model init, tokenized corpus loading, optimizer setup, evaluation, and checkpointing
+- TTFS side: custom reference-based operations in `base_TTFS.py` and `basic_layer_TTFS.py`
+- downstream validation: BERT/GLUE comparison code that checks the TTFS design against standard task performance
 
-- `GPT2/` contains the GPT-2 language-modeling experiments used to study TTFS behavior.
-- `BERT/` contains the BERT/GLUE evaluation experiments used to study downstream task performance.
+This is a research implementation, so some local paths and cache names may still need small adjustments depending on the machine and dataset layout.
 
-The main implementation components are:
+## Notes on reproducibility
 
-- GPT2 training and evaluation loops in `GPT2/train.py` and `GPT2/perplexity.py`
-- TTFS primitives in `GPT2/base_TTFS.py` and `GPT2/basic_layer_TTFS.py`
-- BERT model wrappers in `BERT/model/`
-- GLUE evaluation logic in `BERT/dev_TTFS.py`, `BERT/dev_vanilla.py`, and `BERT/run_glue.py`
+This repo is a faithful source snapshot of the original implementation. It does not ship a complete dataset bundle or a full pretrained model archive, and it is not a polished standalone benchmark runner.
 
-This should be treated as a faithful source snapshot of the authors' implementation, not as a newly standardized reproducibility package. Exact reproduction depends on the original data, pretrained caches, and environment-specific configuration.
-
-## Results
-
-The paper reports the TTFS approach as a sparse, event-driven alternative to conventional ANN-style language modeling, with the implementation here preserving the associated model and evaluation scripts. This repository does not ship a single turnkey benchmark output package or a complete checkpoint bundle, so performance claims should be read from the paper and the original experiment logs rather than inferred from a generic repository run.
+If you want to reproduce the experiments, you still need the original corpora, tokenizer assets, and environment-specific setup used by the source repositories.
 
 ## Citation
 
@@ -179,10 +137,6 @@ The paper reports the TTFS approach as a sparse, event-driven alternative to con
 }
 ```
 
-## Acknowledgements
-
-This project integrates the original TTFS research codebases for the language-model and GLUE experiments. It relies on the PyTorch and Hugging Face ecosystem, and it preserves the original code attribution from the source repositories.
-
 ## License
 
-This repository does not currently declare a single repository-wide license. The `GPT2/` tree includes the original project license file in `GPT2/LICENSE`. The BERT implementation is retained from the original research code without a separate merged license file in this cleaned repository.
+The repo keeps the original project licenses from the source trees. The GPT side includes `GPT2_pretrain/LICENSE`, and the repository does not currently impose a separate unified license on top of the original code.
