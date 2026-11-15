@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+.venv*
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local runtime and generated artifacts
+**/out/
+out/
+**/logs/
+**/cache/
+**/.cache/
+**/wandb/
+**/runs/
+**/*.bin
+**/*.pkl
+**/*.npy
+**/*.npz
+**/*.tar
+**/*.tar.gz
+**/*.zip
+**/*.log
+**/*.tmp
+**/*.tmp.*
+**/.DS_Store
+
+# Data directories that are not part of source control
+**/data/
+**/datasets/
+**/tmp/
+**/tmp*/
+**/checkpoint*/
+
+# Environment files
+.env
+.env.*
+
+# OS
+Thumbs.db
+Desktop.ini

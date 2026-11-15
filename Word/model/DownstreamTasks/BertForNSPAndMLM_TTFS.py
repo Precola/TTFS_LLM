@@ -1,0 +1,193 @@
+import logging
+from ..BasicBert import BertModel, BertModel_TTFS, BertModel_TTFS_relu
+from ..BasicBert import get_activation
+from ..BasicBert import TTFS_unit_gen, TTFS_unit_relu, LayerNorm
+import torch.nn as nn
+import torch
+
+
+class BertForNextSentencePrediction(nn.Module):
+    """
+    仅为下一句预测模型
+    """
+
+    def __init__(self, config, bert_pretrained_model_dir=None):
+        super(BertForNextSentencePrediction, self).__init__()
+        if bert_pretrained_model_dir is not None:
+            self.bert = BertModel.from_pretrained(config, bert_pretrained_model_dir)
+        else:
+            self.bert = BertModel(config)
+        self.classifier = nn.Linear(config.hidden_size, 2)
+
+    def forward(self,
+                input_ids,  # [src_len, batch_size]
+                attention_mask=None,  # [batch_size, src_len] mask掉padding部分的内容
+                token_type_ids=None,  # [src_len, batch_size] 如果输入模型的只有一个序列，那么这个参数也不用传值
+                position_ids=None,
+                next_sentence_labels=None  # [batch_size,]
+                ):
+        pooled_output, _ = self.bert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids)
+        # pooled_output: [batch_size, hidden_size]
+        seq_relationship_score = self.classifier(pooled_output)
+        # seq_relationship_score: [batch_size, 2]
+        if next_sentence_labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_labels.view(-1))
+            return loss
+        else:
+            return seq_relationship_score
+
+
+class BertForLMTransformHead(nn.Module):
+    """
+    用于BertForMaskedLM中的一次变换。 因为在单独的MLM任务中
+    和最后NSP与MLM的整体任务中均要用到，所以这里单独抽象为一个类便于复用
+
+    ref: https://github.com/google-research/bert/blob/master/run_pretraining.py
+        第248-262行
+    """
+
+    def __init__(self, config, bert_model_embedding_weights=None):
+        """
+        :param config:
+        :param bert_model_embedding_weights:
+        the output-weights are the same as the input embeddings, but there is
+        an output-only bias for each token. 即TokenEmbedding层中的词表矩阵
+        """
+        super(BertForLMTransformHead, self).__init__()
+        self.dense_relu = TTFS_unit_relu(config.hidden_size, config.hidden_size)
+        self.LayerNorm = LayerNorm(config.hidden_size, bias = False, eps=1e-12)
+        self.decoder = TTFS_unit_gen(config.hidden_size, config.vocab_size)
+        if bert_model_embedding_weights is not None:
+            self.decoder.weight = nn.Parameter(bert_model_embedding_weights.T)
+        # [hidden_size, vocab_size]
+        self.decoder.D_i = nn.Parameter(torch.zeros(config.vocab_size))
+
+        self.layers = [self.dense_relu, self.LayerNorm, self.decoder]
+
+        self.t_max = None
+
+    def set_params(self, t_min_prev, t_min):
+        for l in self.layers:
+            t_tuple = l.set_params(t_min_prev, t_min)
+            t_min_prev, t_min = t_tuple[-2:]
+        self.t_max = t_min
+
+        return t_min_prev, t_min
+
+    def forward(self, hidden_states):
+        """
+        :param hidden_states: [src_len, batch_size, hidden_size] Bert最后一层的输出
+        :return:
+        """
+        hidden_states = self.dense_relu(hidden_states)  # [src_len, batch_size, hidden_size]
+        hidden_states = self.LayerNorm(hidden_states)  # [src_len, batch_size, hidden_size]
+        hidden_states = self.decoder(hidden_states)
+        # hidden_states:  [src_len, batch_size, vocab_size]
+        return hidden_states
+
+
+class BertForMaskedLM(nn.Module):
+    """
+    仅为掩码语言预测模型
+    """
+
+    def __init__(self, config, bert_pretrained_model_dir=None):
+        super(BertForMaskedLM, self).__init__()
+        if bert_pretrained_model_dir is not None:
+            self.bert = BertModel.from_pretrained(config, bert_pretrained_model_dir)
+        else:
+            self.bert = BertModel(config)
+        weights = None
+        if 'use_embedding_weight' in config.__dict__ and config.use_embedding_weight:
+            weights = self.bert.bert_embeddings.word_embeddings.embedding.weight
+            logging.info(f"## 使用token embedding中的权重矩阵作为输出层的权重！{weights.shape}")
+        self.classifier = BertForLMTransformHead(config, weights)
+        self.config = config
+
+    def forward(self,
+                input_ids,  # [src_len, batch_size]
+                attention_mask=None,  # [batch_size, src_len] mask掉padding部分的内容
+                token_type_ids=None,  # [src_len, batch_size]
+                position_ids=None,
+                masked_lm_labels=None  # [src_len,batch_size]
+                ):
+        _, all_encoder_outputs = self.bert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids)
+        sequence_output = all_encoder_outputs[-1]  # 取Bert最后一层的输出
+        # sequence_output: [src_len, batch_size, hidden_size]
+        prediction_scores = self.classifier(sequence_output)
+        # prediction_scores: [src_len, batch_size, vocab_size]
+        if masked_lm_labels is not None:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=0)
+            masked_lm_loss = loss_fct(prediction_scores.reshape(-1, self.config.vocab_size),
+                                      masked_lm_labels.reshape(-1))
+            return masked_lm_loss
+        else:
+            return prediction_scores  # [src_len, batch_size, vocab_size]
+
+
+class BertForPretrainingModel(nn.Module):
+    """
+    The BERT pre-trained model includes two tasks: MLM (Masked Language Model) and NSP (Next Sentence Prediction).
+    """
+
+    def __init__(self, config, bert_pretrained_model_dir=None):
+        super(BertForPretrainingModel, self).__init__()
+        if bert_pretrained_model_dir is not None:
+            self.bert = BertModel_TTFS.from_pretrained(config, bert_pretrained_model_dir)    #TODO
+        else:  # If no pre-trained model path is specified, randomly initialize the entire network weights.
+            self.bert = BertModel_TTFS(config)  #TODO
+            # self.bert = BertModel(config)  #TODO
+            # self.bert = BertModel_TTFS_relu(config)
+        weights = None
+        if 'use_embedding_weight' in config.__dict__ and config.use_embedding_weight:
+            # weights = self.bert.bert_embeddings.word_embeddings.embedding.weight  #TODo
+            weights = self.bert.bert_embeddings.word_embeddings.embedding.linear.weight
+            logging.info(f"## Use the weight matrix from the token embedding as the weights for the output layer!{weights.shape}")
+        self.mlm_prediction = BertForLMTransformHead(config, weights)
+        self.nsp_prediction = TTFS_unit_gen(config.hidden_size, 2)
+        self.config = config
+
+    def forward(self, input_ids,  # [src_len, batch_size]
+                attention_mask=None,  # [batch_size, src_len] mask掉padding部分的内容
+                token_type_ids=None,  # [src_len, batch_size]
+                position_ids=None,
+                masked_lm_labels=None,  # [src_len,batch_size]
+                next_sentence_labels=None):  # [batch_size]
+        pooled_output, all_encoder_outputs = self.bert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids)
+        sequence_output = all_encoder_outputs[-1] #- self.config.T_RES  # TODO取Bert最后一层的输出
+        # sequence_output: [src_len, batch_size, hidden_size]
+        mlm_prediction_logits = self.mlm_prediction(sequence_output) - self.mlm_prediction.t_max
+        # mlm_prediction_logits: [src_len, batch_size, vocab_size]
+        nsp_pred_logits = self.nsp_prediction(pooled_output) - self.nsp_prediction.t_max_2
+        # nsp_pred_logits： [batch_size, 2]
+        if masked_lm_labels is not None and next_sentence_labels is not None:
+            loss_fct_mlm = nn.CrossEntropyLoss(ignore_index=0)
+            # In the MLM task, during dataset construction, the padding part of the labels is filled with 0.
+            # Therefore, the ignore_index needs to be set to 0.
+            loss_fct_nsp = nn.CrossEntropyLoss()
+            # Since the classification labels in NSP contain 0, and the MLM loss has set ignore_index=0,
+            # a new CrossEntropyLoss needs to be defined here.
+            # If the MLM task uses values like 100 to replace padding and MASK, both tasks can share the same CrossEntropyLoss.
+
+            mlm_loss = loss_fct_mlm(mlm_prediction_logits.reshape(-1, self.config.vocab_size),
+                                    masked_lm_labels.reshape(-1))
+            nsp_loss = loss_fct_nsp(nsp_pred_logits.reshape(-1, 2),
+                                    next_sentence_labels.reshape(-1))
+            total_loss = mlm_loss + nsp_loss
+            return total_loss, mlm_prediction_logits, nsp_pred_logits
+        else:
+            return mlm_prediction_logits, nsp_pred_logits
+        # [src_len, batch_size, vocab_size], [batch_size, 2]
